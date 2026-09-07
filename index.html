@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="so">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ayuub AI</title>
+<style>
+  html, body, #root { height: 100%; margin: 0; padding: 0; }
+  * { box-sizing: border-box; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect, useCallback } = React;
+
+const GREETING = {
+  role: "assistant",
+  content:
+    "Salaan! Waxaan ahay Ayuub AI. I weydii wax kasta — waan ku caawin karaa Af-Soomaali ama Ingiriisi, waxaana awoodaa inaan internet-ka ka raadiyo xog cusub.",
+};
+
+const INDEX_KEY = "ayuub-sessions-index";
+const sessionKey = (id) => `ayuub-session-${id}`;
+
+function makeTitle(text) {
+  const clean = text.trim().replace(/\s+/g, " ");
+  return clean.length > 40 ? clean.slice(0, 40) + "..." : clean;
+}
+
+function AyuubAI() {
+  const [messages, setMessages] = useState([GREETING]);
+  const [sessions, setSessions] = useState([]);
+  const [currentId, setCurrentId] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
+
+  const loadIndex = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(INDEX_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const saveIndex = useCallback((list) => {
+    localStorage.setItem(INDEX_KEY, JSON.stringify(list));
+    setSessions(list);
+  }, []);
+
+  const saveSession = useCallback((id, msgs) => {
+    localStorage.setItem(sessionKey(id), JSON.stringify(msgs));
+  }, []);
+
+  useEffect(() => {
+    const index = loadIndex();
+    if (index.length > 0) {
+      setSessions(index);
+      const latest = index[0];
+      setCurrentId(latest.id);
+      try {
+        const raw = localStorage.getItem(sessionKey(latest.id));
+        setMessages(raw ? JSON.parse(raw) : [GREETING]);
+      } catch {
+        setMessages([GREETING]);
+      }
+    } else {
+      const id = Date.now().toString();
+      const entry = { id, title: "Wadahadal cusub", updatedAt: Date.now() };
+      setCurrentId(id);
+      setMessages([GREETING]);
+      saveSession(id, [GREETING]);
+      saveIndex([entry]);
+    }
+    setReady(true);
+    // eslint-disable-next-line
+  }, []);
+
+  const startNewChat = () => {
+    const id = Date.now().toString();
+    const entry = { id, title: "Wadahadal cusub", updatedAt: Date.now() };
+    const updated = [entry, ...sessions];
+    setCurrentId(id);
+    setMessages([GREETING]);
+    setShowHistory(false);
+    setError("");
+    saveSession(id, [GREETING]);
+    saveIndex(updated);
+  };
+
+  const openSession = (id) => {
+    if (id === currentId) {
+      setShowHistory(false);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(sessionKey(id));
+      setMessages(raw ? JSON.parse(raw) : [GREETING]);
+    } catch {
+      setMessages([GREETING]);
+    }
+    setCurrentId(id);
+    setShowHistory(false);
+    setError("");
+  };
+
+  const sendMessage = async () => {
+    const text = input.trim();
+    if (!text || loading || !currentId) return;
+
+    const newMessages = [...messages, { role: "user", content: text }];
+    setMessages(newMessages);
+    setInput("");
+    setLoading(true);
+    setError("");
+
+    const isFirstUserMessage = !messages.some((m) => m.role === "user");
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      if (!response.ok) throw new Error("network");
+
+      const data = await response.json();
+      const replyText =
+        data.choices && data.choices[0] && data.choices[0].message
+          ? data.choices[0].message.content
+          : "Waan ka xumahay, jawaab ma hayo.";
+
+      const finalMessages = [...newMessages, { role: "assistant", content: replyText }];
+      setMessages(finalMessages);
+      saveSession(currentId, finalMessages);
+
+      const updatedIndex = sessions.map((s) =>
+        s.id === currentId
+          ? { ...s, title: isFirstUserMessage ? makeTitle(text) : s.title, updatedAt: Date.now() }
+          : s
+      );
+      updatedIndex.sort((a, b) => b.updatedAt - a.updatedAt);
+      saveIndex(updatedIndex);
+    } catch (err) {
+      setError("Khalad ayaa dhacay. Fadlan isku day mar kale.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100%", background: "#FAF8F3", fontFamily: "'Segoe UI', system-ui, sans-serif", color: "#2A2420" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "18px 24px", borderBottom: "1px solid #E4DECF", background: "#1F3B4D" }}>
+        <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#C98A2E", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif", fontWeight: "bold", color: "#1F3B4D", fontSize: "16px", flexShrink: 0 }}>A</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: "Georgia, serif", fontSize: "19px", color: "#FAF8F3", lineHeight: 1.2 }}>Ayuub AI</div>
+          <div style={{ fontSize: "12px", color: "#C4B89A" }}>Chatbot fudud oo Af-Soomaali ah</div>
+        </div>
+        <button onClick={() => setShowHistory((v) => !v)} style={{ background: showHistory ? "#C98A2E" : "transparent", border: "1px solid #3D5A6C", borderRadius: "8px", color: "#FAF8F3", fontSize: "13px", padding: "7px 12px", cursor: "pointer" }}>Taariikhda</button>
+        <button onClick={startNewChat} style={{ background: "transparent", border: "1px solid #3D5A6C", borderRadius: "8px", color: "#FAF8F3", fontSize: "13px", padding: "7px 12px", cursor: "pointer" }}>Cusub</button>
+      </div>
+
+      {showHistory && (
+        <div style={{ borderBottom: "1px solid #E4DECF", background: "#FFFFFF", maxHeight: "220px", overflowY: "auto" }}>
+          {sessions.length === 0 && <div style={{ padding: "14px 16px", fontSize: "13px", color: "#8A8272" }}>Wali wadahadal ma jiro.</div>}
+          {sessions.map((s) => (
+            <button key={s.id} onClick={() => openSession(s.id)} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 16px", background: s.id === currentId ? "#FAF0DD" : "transparent", border: "none", borderBottom: "1px solid #F0EBDD", cursor: "pointer", fontSize: "14px", color: "#2A2420" }}>
+              <div>{s.title || "Wadahadal cusub"}</div>
+              <div style={{ fontSize: "11px", color: "#8A8272", marginTop: "2px" }}>{new Date(s.updatedAt).toLocaleString()}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", gap: "14px" }}>
+        {ready && messages.map((m, i) => (
+          <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "78%", display: "flex", flexDirection: "column" }}>
+            <div style={{ background: m.role === "user" ? "#1F3B4D" : "#FFFFFF", color: m.role === "user" ? "#FAF8F3" : "#2A2420", border: m.role === "user" ? "none" : "1px solid #E4DECF", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px", padding: "10px 14px", fontSize: "15px", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{ alignSelf: "flex-start", maxWidth: "78%" }}>
+            <div style={{ background: "#FFFFFF", border: "1px solid #E4DECF", borderRadius: "14px 14px 14px 4px", padding: "10px 14px", fontSize: "15px", color: "#8A8272" }}>Ayuub AI waa qorayaa...</div>
+          </div>
+        )}
+        {error && <div style={{ alignSelf: "center", fontSize: "13px", color: "#B3402A" }}>{error}</div>}
+      </div>
+
+      <div style={{ display: "flex", gap: "10px", padding: "14px 16px", borderTop: "1px solid #E4DECF", background: "#FAF8F3" }}>
+        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Qor fariintaada halkan..." rows={1} style={{ flex: 1, resize: "none", padding: "10px 14px", borderRadius: "10px", border: "1px solid #D8D0BC", fontSize: "15px", fontFamily: "inherit", outline: "none", background: "#FFFFFF", color: "#2A2420" }} />
+        <button onClick={sendMessage} disabled={loading || !input.trim()} aria-label="Dir fariinta" style={{ width: "44px", height: "44px", flexShrink: 0, borderRadius: "10px", border: "none", background: loading || !input.trim() ? "#D8D0BC" : "#C98A2E", color: "#FAF8F3", display: "flex", alignItems: "center", justifyContent: "center", cursor: loading || !input.trim() ? "default" : "pointer" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <polyline points="13 5 20 12 13 19" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<AyuubAI />);
+</script>
+</body>
+  </html>
